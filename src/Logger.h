@@ -4,6 +4,7 @@
 #include <atomic>
 #include <fstream>
 #include <iostream>
+#include <string>
 
 #include "Trade.h"
 #include "ThreadSafeQueue.h"
@@ -19,6 +20,9 @@ private:
 
     std::ofstream logFile;
 
+    int printedTrades = 0;
+    const int MAX_PRINT = 20;
+
 public:
 
     explicit Logger(
@@ -28,9 +32,15 @@ public:
           running(false)
     {
         logFile.open("trades.log");
+
+        if (!logFile.is_open()) {
+            std::cerr
+                << "Failed to open trades.log\n";
+        }
     }
 
     ~Logger() {
+
         stop();
 
         if (logFile.is_open()) {
@@ -51,8 +61,13 @@ public:
 
     void stop() {
 
+        if (!running) {
+            return;
+        }
+
         running = false;
 
+        // sentinel trade
         tradeQueue.push(
             Trade()
         );
@@ -68,10 +83,17 @@ private:
 
     void loggingLoop() {
 
-        while (running) {
+        while (true) {
 
             Trade trade =
                 tradeQueue.pop();
+
+            // stop signal
+            if (!running &&
+                trade.price == 0)
+            {
+                break;
+            }
 
             if (trade.price == 0) {
                 continue;
@@ -105,12 +127,25 @@ private:
                 trade.quantity
             );
 
-        std::cout
-            << msg
-            << std::endl;
+        // print only first few trades
+        if (
+            printedTrades
+            < MAX_PRINT
+        )
+        {
+            std::cout
+                << msg
+                << std::endl;
 
-        logFile
-            << msg
-            << std::endl;
+            printedTrades++;
+        }
+
+        // save ALL trades
+        if (logFile.is_open()) {
+
+            logFile
+                << msg
+                << std::endl;
+        }
     }
 };
