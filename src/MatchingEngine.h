@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <thread>
 #include <atomic>
-#include <functional>
+#include <mutex>
 
 #include "Order.h"
 #include "Trade.h"
@@ -27,15 +27,26 @@ private:
     BuyBook buyBook;
     SellBook sellBook;
 
-    std::unordered_map<uint64_t, Order*> orderLookup;
+    std::unordered_map<uint64_t, Order*>
+        orderLookup;
 
     MemoryPool<Order> orderPool;
 
-    ThreadSafeQueue<Order*> orderQueue;
-    ThreadSafeQueue<Trade> tradeQueue;
+    ThreadSafeQueue<Order*>
+        orderQueue;
+
+    ThreadSafeQueue<Trade>
+        tradeQueue;
 
     std::thread matchingThread;
+
     std::atomic<bool> running;
+
+    std::atomic<uint64_t>
+        nextOrderId{1};
+
+    // FIX
+    std::mutex engineMutex;
 
 public:
 
@@ -55,7 +66,9 @@ public:
         int quantity
     );
 
-    void cancelOrder(uint64_t orderId);
+    void cancelOrder(
+        uint64_t orderId
+    );
 
     void modifyOrder(
         uint64_t orderId,
@@ -63,11 +76,17 @@ public:
         int newQuantity
     );
 
-    void processOrder(Order* order);
+    void processOrder(
+        Order* order
+    );
 
-    void matchBuyOrder(Order* order);
+    void matchBuyOrder(
+        Order* order
+    );
 
-    void matchSellOrder(Order* order);
+    void matchSellOrder(
+        Order* order
+    );
 
     void matchingLoop();
 
@@ -75,8 +94,4 @@ public:
 
     ThreadSafeQueue<Trade>&
     getTradeQueue();
-
-private:
-
-    std::atomic<uint64_t> nextOrderId{1};
 };

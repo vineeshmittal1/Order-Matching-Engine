@@ -26,11 +26,17 @@ void MatchingEngine::start() {
 
 void MatchingEngine::stop() {
 
+    if (!running) {
+        return;
+    }
+
     running = false;
 
     orderQueue.push(nullptr);
 
-    if (matchingThread.joinable()) {
+    if (
+        matchingThread.joinable()
+    ) {
         matchingThread.join();
     }
 }
@@ -56,7 +62,13 @@ uint64_t MatchingEngine::submitOrder(
             quantity
         );
 
-    orderLookup[id] = order;
+   {
+    std::lock_guard<std::mutex>
+        lock(engineMutex);
+
+    orderLookup[id] =
+        order;
+   }
 
     orderQueue.push(order);
 
@@ -65,10 +77,17 @@ uint64_t MatchingEngine::submitOrder(
 
 void MatchingEngine::matchingLoop() {
 
-    while (running) {
+    while (true) {
 
         Order* order =
             orderQueue.pop();
+
+        if (
+            !running &&
+            order == nullptr
+        ) {
+            break;
+        }
 
         if (order == nullptr) {
             continue;
@@ -82,8 +101,13 @@ void MatchingEngine::processOrder(
     Order* order
 ) {
 
-    if (order->side ==
-        OrderSide::BUY)
+    std::lock_guard<std::mutex>
+        lock(engineMutex);
+
+    if (
+        order->side ==
+        OrderSide::BUY
+    )
     {
         matchBuyOrder(order);
     }
@@ -97,8 +121,10 @@ void MatchingEngine::matchBuyOrder(
     Order* order
 ) {
 
-    while (!sellBook.empty() &&
-           order->remainingQty > 0)
+    while (
+        !sellBook.empty() &&
+        order->remainingQty > 0
+    )
     {
 
         auto bestSell =
@@ -107,9 +133,12 @@ void MatchingEngine::matchBuyOrder(
         int sellPrice =
             bestSell->first;
 
-        if (order->type ==
+        if (
+            order->type ==
             OrderType::LIMIT &&
-            sellPrice > order->price)
+            sellPrice >
+            order->price
+        )
         {
             break;
         }
@@ -117,8 +146,10 @@ void MatchingEngine::matchBuyOrder(
         auto& sellQueue =
             bestSell->second;
 
-        while (!sellQueue.empty() &&
-               order->remainingQty > 0)
+        while (
+            !sellQueue.empty() &&
+            order->remainingQty > 0
+        )
         {
 
             Order* sellOrder =
@@ -126,81 +157,127 @@ void MatchingEngine::matchBuyOrder(
 
             int tradeQty =
                 std::min(
-                    order->remainingQty,
-                    sellOrder->remainingQty
+                    order
+                    ->remainingQty,
+                    sellOrder
+                    ->remainingQty
                 );
 
             Trade trade(
                 order->orderId,
-                sellOrder->orderId,
+                sellOrder
+                ->orderId,
                 order->symbol,
-                sellOrder->price,
+                sellOrder
+                ->price,
                 tradeQty
             );
 
-            tradeQueue.push(trade);
+            tradeQueue.push(
+                trade
+            );
 
-            order->remainingQty -=
-                tradeQty;
+            order
+            ->remainingQty
+            -= tradeQty;
 
-            sellOrder->remainingQty -=
-                tradeQty;
+            sellOrder
+            ->remainingQty
+            -= tradeQty;
 
-            if (sellOrder
-                ->remainingQty == 0)
+            // SELL FILLED
+            if (
+                sellOrder
+                ->remainingQty == 0
+            )
             {
 
-                sellOrder->status =
-                    OrderStatus::FILLED;
+                sellOrder
+                ->status =
+                OrderStatus
+                ::FILLED;
 
-                sellQueue.pop_front();
+                sellQueue
+                .pop_front();
 
-                orderLookup.erase(
+                orderLookup
+                .erase(
                     sellOrder
                     ->orderId
                 );
 
-                orderPool.deallocate(
+                orderPool
+                .deallocate(
                     sellOrder
                 );
             }
         }
 
-        if (sellQueue.empty()) {
-            sellBook.erase(bestSell);
+        if (
+            sellQueue.empty()
+        )
+        {
+            sellBook.erase(
+                bestSell
+            );
         }
     }
 
-    if (order->remainingQty > 0 &&
-        order->type ==
-        OrderType::LIMIT)
+    // remaining qty
+    if (
+        order->remainingQty >
+        0
+    )
     {
 
-        buyBook
-        [order->price]
-        .push_back(order);
-    }
-    else
-    {
-        order->status =
-            OrderStatus::FILLED;
+        if (
+            order->type ==
+            OrderType::LIMIT
+        )
+        {
+            buyBook
+            [order->price]
+            .push_back(
+                order
+            );
 
-        orderLookup.erase(
-            order->orderId
-        );
+            return;
+        }
 
-        orderPool.deallocate(
-            order
-        );
+        // IOC leftover cancelled
+        if (
+            order->type ==
+            OrderType::IOC
+        )
+        {
+            order->status =
+            OrderStatus
+            ::CANCELLED;
+        }
     }
+
+    order->status =
+    order->remainingQty == 0
+    ? OrderStatus::FILLED
+    : order->status;
+
+    orderLookup.erase(
+        order->orderId
+    );
+
+    orderPool.deallocate(
+        order
+    );
 }
 
 void MatchingEngine::matchSellOrder(
     Order* order
 ) {
 
-    while (!buyBook.empty() &&
-           order->remainingQty > 0)
+    while (
+        !buyBook.empty() &&
+        order->remainingQty > 0
+    )
     {
 
         auto bestBuy =
@@ -209,9 +286,12 @@ void MatchingEngine::matchSellOrder(
         int buyPrice =
             bestBuy->first;
 
-        if (order->type ==
+        if (
+            order->type ==
             OrderType::LIMIT &&
-            buyPrice < order->price)
+            buyPrice <
+            order->price
+        )
         {
             break;
         }
@@ -219,8 +299,10 @@ void MatchingEngine::matchSellOrder(
         auto& buyQueue =
             bestBuy->second;
 
-        while (!buyQueue.empty() &&
-               order->remainingQty > 0)
+        while (
+            !buyQueue.empty() &&
+            order->remainingQty > 0
+        )
         {
 
             Order* buyOrder =
@@ -228,73 +310,115 @@ void MatchingEngine::matchSellOrder(
 
             int tradeQty =
                 std::min(
-                    order->remainingQty,
-                    buyOrder->remainingQty
+                    order
+                    ->remainingQty,
+                    buyOrder
+                    ->remainingQty
                 );
 
             Trade trade(
-                buyOrder->orderId,
+                buyOrder
+                ->orderId,
                 order->orderId,
                 order->symbol,
-                buyOrder->price,
+                buyOrder
+                ->price,
                 tradeQty
             );
 
-            tradeQueue.push(trade);
+            tradeQueue.push(
+                trade
+            );
 
-            order->remainingQty -=
-                tradeQty;
+            order
+            ->remainingQty
+            -= tradeQty;
 
-            buyOrder->remainingQty -=
-                tradeQty;
+            buyOrder
+            ->remainingQty
+            -= tradeQty;
 
-            if (buyOrder
-                ->remainingQty == 0)
+            // BUY FILLED
+            if (
+                buyOrder
+                ->remainingQty == 0
+            )
             {
 
-                buyOrder->status =
-                    OrderStatus::FILLED;
+                buyOrder
+                ->status =
+                OrderStatus
+                ::FILLED;
 
-                buyQueue.pop_front();
+                buyQueue
+                .pop_front();
 
-                orderLookup.erase(
+                orderLookup
+                .erase(
                     buyOrder
                     ->orderId
                 );
 
-                orderPool.deallocate(
+                orderPool
+                .deallocate(
                     buyOrder
                 );
             }
         }
 
-        if (buyQueue.empty()) {
-            buyBook.erase(bestBuy);
+        if (
+            buyQueue.empty()
+        )
+        {
+            buyBook.erase(
+                bestBuy
+            );
         }
     }
 
-    if (order->remainingQty > 0 &&
-        order->type ==
-        OrderType::LIMIT)
+    if (
+        order->remainingQty >
+        0
+    )
     {
 
-        sellBook
-        [order->price]
-        .push_back(order);
-    }
-    else
-    {
-        order->status =
-            OrderStatus::FILLED;
+        if (
+            order->type ==
+            OrderType::LIMIT
+        )
+        {
+            sellBook
+            [order->price]
+            .push_back(
+                order
+            );
 
-        orderLookup.erase(
-            order->orderId
-        );
+            return;
+        }
 
-        orderPool.deallocate(
-            order
-        );
+        if (
+            order->type ==
+            OrderType::IOC
+        )
+        {
+            order->status =
+            OrderStatus
+            ::CANCELLED;
+        }
     }
+
+    order->status =
+    order->remainingQty == 0
+    ? OrderStatus::FILLED
+    : order->status;
+
+    orderLookup.erase(
+        order->orderId
+    );
+
+    orderPool.deallocate(
+        order
+    );
 }
 
 void MatchingEngine::cancelOrder(
@@ -306,8 +430,10 @@ void MatchingEngine::cancelOrder(
             orderId
         );
 
-    if (it ==
-        orderLookup.end())
+    if (
+        it ==
+        orderLookup.end()
+    )
     {
         return;
     }
@@ -315,12 +441,71 @@ void MatchingEngine::cancelOrder(
     Order* order =
         it->second;
 
+    auto removeOrder =
+        [&](auto& book)
+    {
+        auto priceIt =
+            book.find(
+                order->price
+            );
+
+        if (
+            priceIt ==
+            book.end()
+        )
+        {
+            return;
+        }
+
+        auto& queue =
+            priceIt->second;
+
+        queue.erase(
+            std::remove(
+                queue.begin(),
+                queue.end(),
+                order
+            ),
+            queue.end()
+        );
+
+        if (
+            queue.empty()
+        )
+        {
+            book.erase(
+                priceIt
+            );
+        }
+    };
+
+    if (
+        order->side ==
+        OrderSide::BUY
+    )
+    {
+        removeOrder(
+            buyBook
+        );
+    }
+    else
+    {
+        removeOrder(
+            sellBook
+        );
+    }
+
     order->status =
-        OrderStatus::CANCELLED;
+        OrderStatus
+        ::CANCELLED;
 
-    order->remainingQty = 0;
+    orderLookup.erase(
+        orderId
+    );
 
-    orderLookup.erase(it);
+    orderPool.deallocate(
+        order
+    );
 }
 
 void MatchingEngine::modifyOrder(
@@ -334,38 +519,62 @@ void MatchingEngine::modifyOrder(
             orderId
         );
 
-    if (it ==
-        orderLookup.end())
+    if (
+        it ==
+        orderLookup.end()
+    )
     {
         return;
     }
 
-    Order* order =
+    Order* oldOrder =
         it->second;
 
-    order->price =
-        newPrice;
+    std::string symbol =
+        oldOrder->symbol;
 
-    order->quantity =
-        newQuantity;
+    OrderSide side =
+        oldOrder->side;
 
-    order->remainingQty =
-        newQuantity;
+    OrderType type =
+        oldOrder->type;
+
+    cancelOrder(
+        orderId
+    );
+
+    submitOrder(
+        symbol,
+        side,
+        type,
+        newPrice,
+        newQuantity
+    );
 }
 
 void MatchingEngine::printOrderBook() {
 
     std::cout
-        << "\nBUY BOOK\n";
+        << "\n========== "
+        << "BUY BOOK "
+        << "==========\n";
 
-    for (auto& [price, q]
-         : buyBook)
+    for (
+        auto&
+        [price, queue]
+        : buyBook
+    )
     {
+
         std::cout
             << price
             << " -> ";
 
-        for (auto* order : q)
+        for (
+            auto*
+            order
+            : queue
+        )
         {
             std::cout
                 << order
@@ -373,20 +582,31 @@ void MatchingEngine::printOrderBook() {
                 << " ";
         }
 
-        std::cout << "\n";
+        std::cout
+            << "\n";
     }
 
     std::cout
-        << "\nSELL BOOK\n";
+        << "\n========== "
+        << "SELL BOOK "
+        << "==========\n";
 
-    for (auto& [price, q]
-         : sellBook)
+    for (
+        auto&
+        [price, queue]
+        : sellBook
+    )
     {
+
         std::cout
             << price
             << " -> ";
 
-        for (auto* order : q)
+        for (
+            auto*
+            order
+            : queue
+        )
         {
             std::cout
                 << order
@@ -394,7 +614,8 @@ void MatchingEngine::printOrderBook() {
                 << " ";
         }
 
-        std::cout << "\n";
+        std::cout
+            << "\n";
     }
 }
 
